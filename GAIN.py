@@ -3,15 +3,17 @@ import torch
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 from models import Generator, Discriminator
+from utils import TrainHistory, EarlyStopper
 
 
 class GAIN:
-    def __init__(self, train_loader: DataLoader, hint_rate: float = 0.1, alpha: float = 10) -> None:
+    def __init__(self, train_loader: DataLoader, hint_rate: float = 0.1, alpha: float = 10, device: str = 'cpu', seed: int = None) -> None:
         if hint_rate > 1 or hint_rate < 0:
             raise ValueError('@hint_rate must be between 0 and 1 inclusive')
 
         self.hint_rate = hint_rate
         self.alpha = alpha
+        self.device = device
         self.train_loader = train_loader
 
         x_data, m_data = iter(train_loader).next()
@@ -20,17 +22,15 @@ class GAIN:
 
         self.n_features = x_data.shape[1]
 
-        self.G = Generator(self.n_features)
-        self.D = Discriminator(self.n_features)
+        if seed is not None:
+            self._set_seed(seed)
+
+        self.G = Generator(self.n_features).to(self.device)
+        self.D = Discriminator(self.n_features).to(self.device)
 
         self.optimizer_G = None
         self.optimizer_D = None
-        self.history = {
-            'G_loss': [],
-            'D_loss': [],
-            'RMSE_train': [],
-            'RMSE_test': []
-        }
+        self.history = TrainHistory()
 
     def set_optimizer(self, optimizer: torch.optim.Optimizer, generator: bool = True) -> None:
         if generator:
@@ -38,7 +38,12 @@ class GAIN:
         else:
             self.optimizer_D = optimizer
 
-    def train(self, n_epoches: int, verbose=True) -> None:
+    def to(self, device):
+        self.device = device
+        self.G.to(self.device)
+        self.D.to(self.device)
+
+    def train(self, n_epoches: int, stopper: EarlyStopper = None,  verbose=True) -> None:
         if self.optimizer_G is None or self.optimizer_D is None:
             return
 
@@ -48,18 +53,19 @@ class GAIN:
         for epoch in range(n_epoches):
             D_mb = []
             G_mb = []
-            RMSE_train_mb = []
-            RMSE_test_mb = []
+            MSE_train_mb = []
+            MSE_test_mb = []
 
             t_epoch = tqdm(self.train_loader, unit='batch', disable=(not verbose))
-            for X, M in t_epoch:
+            for X_batch, M_batch in t_epoch:
                 t_epoch.set_description(f'Epoch {epoch}')
                 t_epoch.refresh()
 
-                X_old = torch.nan_to_num(X, nan=0)
+                M = M_batch.to(self.device)
+                X_old = torch.nan_to_num(X_batch, nan=0).to(self.device)
 
-                Z = self._sample_z(shape=M.shape)
-                B = self._sample_b(shape=M.shape, p=self.hint_rate)
+                Z = self._sample_z(shape=M.shape).to(self.device)
+                B = self._sample_b(shape=M.shape, p=self.hint_rate).to(self.device)
                 H = B * M + 0.5 * (1 - B)
 
                 X_new = M * X_old + (1 - M) * Z
@@ -77,29 +83,42 @@ class GAIN:
                 self.optimizer_G.step()
                 self.optimizer_G.zero_grad()
 
-                RMSE_train_mb.append(np.sqrt(MSE_train.item()))
-                RMSE_test_mb.append(np.sqrt(MSE_test.item()))
+                MSE_train_mb.append(MSE_train.item())
+                MSE_test_mb.append(MSE_test.item())
                 G_mb.append(G_loss.item())
 
-                t_epoch.set_postfix(rmse_train=np.mean(RMSE_train_mb), rmse_test=np.mean(RMSE_test_mb))
+                t_epoch.set_postfix(mse_train=np.mean(MSE_train_mb), mse_test=np.mean(MSE_test_mb))
 
             D_loss_epoch = np.mean(D_mb)
             G_loss_epoch = np.mean(G_mb)
-            RMSE_train_epoch = np.mean(RMSE_train_mb)
-            RMSE_test_epoch = np.mean(RMSE_test_mb)
+            MSE_train_epoch = np.mean(MSE_train_mb)
+            MSE_test_epoch = np.mean(MSE_test_mb)
 
-            self.history['D_loss'].append(D_loss_epoch)
-            self.history['G_loss'].append(G_loss_epoch)
-            self.history['RMSE_train'].append(RMSE_train_epoch)
-            self.history['RMSE_test'].append(RMSE_test_epoch)
+            if stopper is not None:
+                stopper(loss=MSE_test_epoch)
+                if stopper.early_stop:
+                    break
+
+            self.history.G_loss.append(G_loss_epoch)
+            self.history.D_loss.append(D_loss_epoch)
+            self.history.MSE_train.append(MSE_train_epoch)
+            self.history.MSE_test.append(MSE_test_epoch)
 
     def evaluation(self, x, m):
-        x = torch.nan_to_num(x, nan=0)
+        x = torch.nan_to_num(x, nan=0).to(self.device)
+        m = m.to(self.device)
+
         self.G.eval()
         with torch.no_grad():
             x_imputed = self.G(torch.cat(tensors=[x, m], dim=1))
             x_hat = m * x + (1 - m) * x_imputed
             return x_hat
+
+    def _set_seed(self, seed):
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        torch.manual_seed(seed)
+        np.random.seed(seed)
 
     def _discriminator_step(self, x_new, m, h):
         x_imputed = self.G(torch.cat(tensors=[x_new, m], dim=1))

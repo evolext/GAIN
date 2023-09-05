@@ -7,6 +7,8 @@ from torch.utils.data import TensorDataset
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 from GAIN import GAIN
+from utils import get_mask, EarlyStopper
+import matplotlib.pyplot as plt
 
 
 def add_missings(x: np.array, miss_rate: float) -> np.array:
@@ -20,24 +22,15 @@ def add_missings(x: np.array, miss_rate: float) -> np.array:
     return x_missed
 
 
-def get_mask(x: torch.Tensor) -> torch.Tensor:
-    """
-    :param x:
-    :return: 0 indicating missing values, 1 indicating not missing values
-    """
-    return torch.logical_not(torch.isnan(x)).long().float()
-
-
 if __name__ == '__main__':
 
     seed = 13
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    torch.manual_seed(seed)
-    np.random.seed(seed)
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    stopper = EarlyStopper(patience=2, min_delta=0.001)
 
     data = pd.read_csv('./data/Letter.csv').values
 
+    np.random.seed(seed)
     data_missed = add_missings(data, miss_rate=0.2)
 
     # Normalization
@@ -61,21 +54,22 @@ if __name__ == '__main__':
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=128, shuffle=False)
 
     # Model initialization and training
-    model = GAIN(train_loader=train_loader)
+    model = GAIN(train_loader=train_loader, seed=seed)
 
     optimizer_G = torch.optim.Adam(model.G.parameters())
     optimizer_D = torch.optim.Adam(model.D.parameters())
     model.set_optimizer(optimizer=optimizer_G, generator=True)
     model.set_optimizer(optimizer=optimizer_D, generator=False)
 
-    model.train(n_epoches=10, verbose=True)
+    model.to(device)
+    model.train(n_epoches=100, verbose=True, stopper=stopper)
 
     # Model evaluation
     rmse_batch = []
 
     for x_test_batch, m_batch, x_actual_batch in test_loader:
         x_batch_imputed = model.evaluation(x=x_test_batch, m=m_batch)
-        x_batch_imputed = scaler.inverse_transform(x_batch_imputed.numpy())
+        x_batch_imputed = scaler.inverse_transform(x_batch_imputed.cpu().numpy())
 
         rmse = np.sqrt(mean_squared_error(y_true=x_actual_batch.numpy(), y_pred=x_batch_imputed))
         rmse_batch.append(rmse)
@@ -83,9 +77,7 @@ if __name__ == '__main__':
     print(np.mean(rmse_batch))
 
     # fig, ax = plt.subplots(1, 1, figsize=(12, 5))
-    # ax.plot(model.history['RMSE_train'], label='train')
-    # ax.plot(model.history['RMSE_test'], label='test')
+    # ax.plot(model.history.MSE_train, label='train')
+    # ax.plot(model.history.MSE_test, label='test')
     # ax.legend()
     # plt.show()
-
-
