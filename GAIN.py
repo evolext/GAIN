@@ -42,6 +42,9 @@ class GAIN:
         if self.optimizer_G is None or self.optimizer_D is None:
             return
 
+        self.G.train()
+        self.D.train()
+
         for epoch in range(n_epoches):
             D_mb = []
             G_mb = []
@@ -89,6 +92,14 @@ class GAIN:
             self.history['G_loss'].append(G_loss_epoch)
             self.history['RMSE_train'].append(RMSE_train_epoch)
             self.history['RMSE_test'].append(RMSE_test_epoch)
+
+    def evaluation(self, x, m):
+        x = torch.nan_to_num(x, nan=0)
+        self.G.eval()
+        with torch.no_grad():
+            x_imputed = self.G(torch.cat(tensors=[x, m], dim=1))
+            x_hat = m * x + (1 - m) * x_imputed
+            return x_hat
 
     def _discriminator_step(self, x_new, m, h):
         x_imputed = self.G(torch.cat(tensors=[x_new, m], dim=1))

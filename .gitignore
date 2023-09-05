@@ -1,0 +1,6 @@
+data/
+
+# pycharm
+__pycache__/
+venv/
+.idea/
