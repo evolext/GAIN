@@ -1,8 +1,19 @@
-import torch.nn as nn
+"""
+    Description of the GAIN model generator and discriminator units
+"""
+
+import torch
+from torch import nn
 
 
 class Generator(nn.Module):
-    def __init__(self, input_size):
+    """
+        Generator model unit
+    """
+    def __init__(self, input_size: int) -> None:
+        """
+        @param input_size: number of features in the processed data set
+        """
         super().__init__()
 
         self.main = nn.Sequential(
@@ -14,12 +25,23 @@ class Generator(nn.Module):
             nn.Sigmoid()
         )
 
-    def forward(self, x):
-        return self.main(x)
+    def forward(self, x_batch: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the generator model
+
+        @param x_batch: processing data tensor
+        """
+        return self.main(x_batch)
 
 
 class Discriminator(nn.Module):
-    def __init__(self, input_size):
+    """
+        Discriminator model unit
+    """
+    def __init__(self, input_size: int) -> None:
+        """
+        @param input_size: number of features in the processed data set
+        """
         super().__init__()
 
         self.main = nn.Sequential(
@@ -31,5 +53,10 @@ class Discriminator(nn.Module):
             nn.Sigmoid()
         )
 
-    def forward(self, x):
-        return self.main(x)
+    def forward(self, x_batch: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the discriminator model
+
+        @param x_batch: processing data tensor
+        """
+        return self.main(x_batch)
