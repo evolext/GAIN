@@ -8,7 +8,6 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 from GAIN import GAIN
 from utils import get_mask, EarlyStopper
-import matplotlib.pyplot as plt
 
 
 def add_missings(x: np.array, miss_rate: float) -> np.array:
